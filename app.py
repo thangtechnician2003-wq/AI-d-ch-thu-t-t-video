@@ -11,12 +11,6 @@ import google.generativeai as genai
 from openai import OpenAI
 import anthropic
 
-# Thư viện phụ đề YouTube chuẩn
-try:
-    from youtube_transcript_api import YouTubeTranscriptApi
-except Exception:
-    YouTubeTranscriptApi = None
-
 # 1. CẤU HÌNH GIAO DIỆN
 st.set_page_config(
     page_title="Studio Kịch Bản & Video AI", 
@@ -78,13 +72,12 @@ LANGUAGES = [
     "Tiếng Nhật", "Tiếng Pháp (Canada)"
 ]
 
-# --- THUẬT TOÁN CHIA NHỎ VĂN BẢN THÔNG MINH (CHỐNG TRÀN TOKEN API) ---
+# --- THUẬT TOÁN CHIA NHỎ VĂN BẢN (CHỐNG TRÀN TẢI TOKEN API) ---
 def split_text_smartly(text, max_chars=2500):
     text = text.strip()
     if len(text) <= max_chars:
         return [text]
     
-    # 1. Tách ưu tiên theo dòng/đoạn văn bản
     paragraphs = text.split("\n")
     chunks = []
     current_chunk = []
@@ -103,7 +96,6 @@ def split_text_smartly(text, max_chars=2500):
     if current_chunk:
         chunks.append("\n".join(current_chunk).strip())
         
-    # 2. Xử lý trường hợp đoạn văn quá dài không có dấu xuống dòng
     final_chunks = []
     for c in chunks:
         if len(c) <= max_chars:
@@ -122,107 +114,115 @@ def split_text_smartly(text, max_chars=2500):
                 
     return [c for c in final_chunks if c.strip()]
 
-# --- BỘ TRÍCH XUẤT PHỤ ĐỀ YOUTUBE ĐA TẦNG (HYBRID) ---
-def fetch_youtube_subtitles(url):
-    pattern = r"(?:v=|\/|youtu\.be\/|shorts\/)([0-9A-Za-z_-]{11})"
-    match = re.search(pattern, url)
-    if not match:
-        return None, None, "Đường link không hợp lệ hoặc không tìm thấy ID video YouTube."
-    video_id = match.group(1)
+# --- HÀM TRÍCH XUẤT VIDEO ID CHUẨN XÁC TUYỆT ĐỐI ---
+def extract_video_id(url):
+    url = url.strip()
+    if "v=" in url:
+        return url.split("v=")[1].split("&")[0][:11]
+    elif "youtu.be/" in url:
+        return url.split("youtu.be/")[1].split("?")[0][:11]
+    elif "shorts/" in url:
+        return url.split("shorts/")[1].split("?")[0][:11]
+    match = re.search(r"([0-9A-Za-z_-]{11})", url)
+    return match.group(1) if match else None
 
-    # TẦNG 1: Sử dụng thư viện youtube_transcript_api (Chạy rất ổn định trên Streamlit Cloud)
-    if YouTubeTranscriptApi is not None:
-        try:
-            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-            # Ưu tiên phụ đề gốc do tác giả đăng, nếu không có thì lấy phụ đề tự động (ASR)
-            manual_subs = [t for t in transcript_list if not t.is_generated]
-            auto_subs = [t for t in transcript_list if t.is_generated]
+# --- BỘ GIẢI MÃ PHỤ ĐỀ YOUTUBE VƯỢT TƯỜNG LỬA CLOUD (3 TẦNG BẢO VỆ) ---
+def fetch_youtube_subtitles_cloud(video_id):
+    # TẦNG 1: Sử dụng cổng Innertube Android Client (Không bị chặn trang Bot trên Cloud)
+    try:
+        api_url = "https://www.youtube.com/youtubei/v1/player"
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "com.google.android.youtube/19.29.35 (Linux; U; Android 11) gzip"
+        }
+        payload = {
+            "context": {
+                "client": {
+                    "hl": "vi",
+                    "gl": "VN",
+                    "clientName": "ANDROID",
+                    "clientVersion": "19.29.35",
+                    "androidSdkVersion": 30
+                }
+            },
+            "videoId": video_id
+        }
+        req = urllib.request.Request(api_url, data=json.dumps(payload).encode("utf-8"), headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            player_data = json.loads(resp.read().decode("utf-8"))
             
-            target = manual_subs[0] if manual_subs else (auto_subs[0] if auto_subs else next(iter(transcript_list), None))
-            if target:
-                data = target.fetch()
+        caption_tracks = player_data.get("captions", {}).get("playerCaptionsTracklistRenderer", {}).get("captionTracks", [])
+        if caption_tracks:
+            # Ưu tiên lấy phụ đề gốc
+            sorted_tracks = sorted(caption_tracks, key=lambda x: 1 if x.get("kind") == "asr" else 0)
+            target_track = sorted_tracks[0]
+            base_url = target_track.get("baseUrl")
+            
+            sub_req = urllib.request.Request(base_url + "&fmt=json3", headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(sub_req, timeout=10) as s_resp:
+                s_json = json.loads(s_resp.read().decode("utf-8"))
+                
+            lines = []
+            for ev in s_json.get("events", []):
+                segs = ev.get("segs", [])
+                t_line = "".join(s.get("utf8", "") for s in segs if "utf8" in s).strip()
+                if t_line and not (t_line.startswith("[") and t_line.endswith("]")):
+                    lines.append(t_line)
+                    
+            if lines:
+                name_run = target_track.get("name", {}).get("runs", [{}])[0].get("text")
+                lang_name = name_run or target_track.get("name", {}).get("simpleText", target_track.get("languageCode", "Gốc"))
+                kind_str = "Tự động tạo (ASR)" if target_track.get("kind") == "asr" else "Phụ đề gốc tác giả"
+                return "\n".join(lines), f"{lang_name} [{target_track.get('languageCode', '')}] • {kind_str}", None
+    except Exception:
+        pass
+
+    # TẦNG 2: Mạng lưới Invidious Proxy (Vượt hoàn toàn dải IP bị cấm của AWS)
+    instances = [
+        "https://inv.nadeko.net",
+        "https://invidious.nerdvpn.de",
+        "https://invidious.drgns.space",
+        "https://yt.artemislena.eu"
+    ]
+    for inst in instances:
+        try:
+            c_url = f"{inst}/api/v1/captions/{video_id}"
+            c_req = urllib.request.Request(c_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(c_req, timeout=8) as c_resp:
+                c_data = json.loads(c_resp.read().decode("utf-8"))
+            
+            captions = c_data.get("captions", [])
+            if captions:
+                target_c = captions[0]
+                sub_download_url = f"{inst}{target_c.get('url')}"
+                vtt_req = urllib.request.Request(sub_download_url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(vtt_req, timeout=8) as vtt_resp:
+                    vtt_text = vtt_resp.read().decode("utf-8", errors="ignore")
+                
+                # Bóc tách định dạng WebVTT
                 lines = []
-                for entry in data:
-                    txt = entry.get("text", "").strip()
-                    if txt and not (txt.startswith("[") and txt.endswith("]")):
-                        lines.append(txt)
+                for l in vtt_text.splitlines():
+                    l = l.strip()
+                    if not l or l.startswith("WEBVTT") or l.startswith("NOTE") or "-->" in l:
+                        continue
+                    clean_l = html.unescape(re.sub(r"<[^>]+>", "", l)).strip()
+                    if clean_l and not (clean_l.startswith("[") and clean_l.endswith("]")):
+                        if not lines or lines[-1] != clean_l:
+                            lines.append(clean_l)
+                
                 if lines:
-                    kind_str = "Tự động tạo (ASR)" if target.is_generated else "Phụ đề gốc tác giả"
-                    lang_label = f"{target.language} [{target.language_code}] • {kind_str}"
+                    lang_label = f"{target_c.get('label', 'Phụ đề')} [{target_c.get('language_code', '')}] • Mạng lưới Proxy"
                     return "\n".join(lines), lang_label, None
         except Exception:
-            pass
+            continue
 
-    # TẦNG 2: Bộ cào trực tiếp qua HTTP (Dự phòng)
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept-Language": "vi,en-US;q=0.9,en;q=0.8"
-    }
-    try:
-        req = urllib.request.Request(f"https://www.youtube.com/watch?v={video_id}", headers=headers)
-        with urllib.request.urlopen(req, timeout=12) as resp:
-            html_page = resp.read().decode("utf-8", errors="ignore")
-        
-        pos = html_page.find("ytInitialPlayerResponse")
-        if pos != -1:
-            start_brace = html_page.find("{", pos)
-            brace_count = 0
-            inside_string = False
-            escape = False
-            json_str = None
-            for i in range(start_brace, len(html_page)):
-                c = html_page[i]
-                if escape: escape = False; continue
-                if c == '\\': escape = True; continue
-                if c == '"': inside_string = not inside_string; continue
-                if not inside_string:
-                    if c == '{': brace_count += 1
-                    elif c == '}':
-                        brace_count -= 1
-                        if brace_count == 0:
-                            json_str = html_page[start_brace:i+1]
-                            break
-            
-            if json_str:
-                p_data = json.loads(json_str)
-                caption_tracks = p_data.get("captions", {}).get("playerCaptionsTracklistRenderer", {}).get("captionTracks", [])
-                if caption_tracks:
-                    sorted_tracks = sorted(caption_tracks, key=lambda x: 1 if x.get("kind") == "asr" else 0)
-                    for track in sorted_tracks:
-                        sub_url = track.get("baseUrl")
-                        if not sub_url: continue
-                        for fmt in ["&fmt=json3", "", "&fmt=srv1"]:
-                            try:
-                                t_url = sub_url + (fmt if fmt and "fmt=" not in sub_url else "")
-                                s_req = urllib.request.Request(t_url, headers=headers)
-                                with urllib.request.urlopen(s_req, timeout=10) as s_resp:
-                                    s_data = s_resp.read().decode("utf-8", errors="ignore").strip()
-                                
-                                lines = []
-                                if s_data.startswith("{"):
-                                    j_obj = json.loads(s_data)
-                                    for ev in j_obj.get("events", []):
-                                        segs = ev.get("segs", [])
-                                        t_line = "".join(s.get("utf8", "") for s in segs if "utf8" in s).strip()
-                                        if t_line and not (t_line.startswith("[") and t_line.endswith("]")):
-                                            lines.append(t_line)
-                                else:
-                                    matches = re.findall(r"<(?:text|p)[^>]*>(.*?)</(?:text|p)>", s_data, re.DOTALL)
-                                    for m in matches:
-                                        cl = html.unescape(re.sub(r"<[^>]+>", "", m)).strip()
-                                        if cl and not (cl.startswith("[") and cl.endswith("]")):
-                                            lines.append(cl)
-                                
-                                if lines:
-                                    lang_name = track.get("name", {}).get("simpleText", track.get("languageCode", "Gốc"))
-                                    kind_str = "Tự động tạo (ASR)" if track.get("kind") == "asr" else "Phụ đề gốc tác giả"
-                                    return "\n".join(lines), f"{lang_name} [{track.get('languageCode', '')}] • {kind_str}", None
-                            except Exception:
-                                continue
-    except Exception as e:
-        return None, None, f"Lỗi kết nối máy chủ YouTube: {e}"
+    return None, None, "Không thể lấy phụ đề do YouTube tạm thời hạn chế truy cập đối với video này. Bạn có thể dán trực tiếp kịch bản vào khung bên dưới để tiếp tục."
 
-    return None, None, "Video này không có phụ đề khả dụng hoặc máy chủ tạm thời giới hạn truy cập."
+def get_subtitles(url):
+    video_id = extract_video_id(url)
+    if not video_id:
+        return None, None, "Đường link không hợp lệ hoặc không tìm thấy ID video YouTube."
+    return fetch_youtube_subtitles_cloud(video_id)
 
 # --- THANH BÊN (LỊCH SỬ PHIÊN) ---
 with st.sidebar:
@@ -348,8 +348,8 @@ with c_yt_btn:
         if not yt_input_url.strip():
             st.warning("Vui lòng dán link video YouTube.")
         else:
-            with st.spinner("Đang trích xuất phụ đề gốc của video..."):
-                subs_text, lang_name, err_msg = fetch_youtube_subtitles(yt_input_url.strip())
+            with st.spinner("Đang kích hoạt cổng giải mã phụ đề..."):
+                subs_text, lang_name, err_msg = get_subtitles(yt_input_url.strip())
                 if err_msg:
                     st.error(err_msg)
                 else:
@@ -452,7 +452,6 @@ def run_translation_with_chunking(m_choice, full_text, lang, style):
         clean_res = re.sub(r"<think>.*?</think>", "", res, flags=re.DOTALL).strip()
         translated_parts.append(clean_res)
         
-        # Độ trễ 1.2s giúp tránh bị chạm trần Rate Limit (TPM)
         if idx < total:
             time.sleep(1.2)
             
