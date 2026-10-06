@@ -2,3 +2,4 @@ streamlit
 google-generativeai
 openai
 anthropic
+youtube-transcript-api
