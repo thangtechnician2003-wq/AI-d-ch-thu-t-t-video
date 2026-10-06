@@ -58,27 +58,50 @@ if "detected_sub_lang" not in st.session_state:
 if "groq_models" not in st.session_state:
     st.session_state.groq_models = [
         "openai/gpt-oss-120b",
-        "deepseek-r1-distill-llama-70b",
         "meta-llama/llama-4-scout-17b-16e-instruct",
+        "deepseek-r1-distill-llama-70b",
         "qwen/qwen3.8-27b"
     ]
 
 LANGUAGES = [
-    "Tiếng Việt", "Tiếng Anh", "Tiếng Ả Rập", "Tiếng Croatia", "Tiếng Serbia", "Tiếng Ba Lan",
-    "Tiếng Séc", "Tiếng Pháp", "Tiếng Đức", "Tiếng Tây Ban Nha", "Tiếng Bồ Đào Nha",
-    "Tiếng Hà Lan", "Tiếng Thái Lan", "Tiếng Ấn Độ", "Tiếng Đan Mạch", "Tiếng Na Uy",
-    "Tiếng Hungary", "Tiếng Slovenia", "Tiếng Romania", "Tiếng Phần Lan", "Tiếng Thụy Điển",
-    "Tiếng Ý", "Tiếng Đức (Áo)", "Tiếng Ireland", "Tiếng Hy Lạp", "Tiếng Hàn",
-    "Tiếng Nhật", "Tiếng Pháp (Canada)"
+    "Tiếng Anh", "Tiếng Tây Ban Nha", "Tiếng Pháp", "Tiếng Đức", "Tiếng Ý", "Tiếng Bồ Đào Nha",
+    "Tiếng Nga", "Tiếng Hà Lan", "Tiếng Ba Lan", "Tiếng Séc", "Tiếng Thụy Điển", "Tiếng Đan Mạch",
+    "Tiếng Phần Lan", "Tiếng Na Uy", "Tiếng Hy Lạp", "Tiếng Romania", "Tiếng Hungary",
+    "Tiếng Thổ Nhĩ Kỳ", "Tiếng Ả Rập", "Tiếng Nhật", "Tiếng Hàn", "Tiếng Trung (Giản thể)",
+    "Tiếng Thái Lan", "Tiếng Việt"
 ]
 
-# --- THUẬT TOÁN CHIA NHỎ VĂN BẢN (NÂNG LÊN SÁT 90% TRẦN MODEL: 18.000 KÝ TỰ) ---
-def split_text_smartly(text, max_chars=18000):
+# --- HÀM CẮT ĐOẠN ĐỘNG THEO NĂNG LỰC TỪNG MODEL ---
+def get_model_profile(model_name):
+    """Xác định thông số tối ưu tương thích với từng model"""
+    name = model_name.lower()
+    if "120b" in name or "gpt" in name:
+        # GPT-OSS-120B: Chất lượng dịch đỉnh cao, giới hạn 8.000 TPM -> Cắt đoạn 8.500 ký tự
+        return {
+            "chunk_size": 8500,
+            "max_output_tokens": 2600,
+            "style_prompt": "Giữ đúng sắc thái cảm xúc, hành văn tự nhiên, mượt mà như văn bản xuất bản."
+        }
+    elif "llama" in name:
+        # Meta Llama: Tốc độ cực nhanh, trần 30.000 TPM -> Đẩy khối lớn 15.000 ký tự, thêm chỉ dẫn bù đắp câu từ
+        return {
+            "chunk_size": 15000,
+            "max_output_tokens": 3800,
+            "style_prompt": "Hãy diễn đạt câu văn thật uyển chuyển, tránh dịch máy móc thô cứng, bảo toàn trọn vẹn ngữ nghĩa."
+        }
+    else:
+        # Các model mặc định khác (Qwen, DeepSeek...)
+        return {
+            "chunk_size": 9500,
+            "max_output_tokens": 3000,
+            "style_prompt": "Dịch sát nghĩa và mạch lạc."
+        }
+
+def split_text_smartly(text, max_chars):
     text = text.strip()
     if len(text) <= max_chars:
         return [text]
     
-    # Ưu tiên tách theo đoạn văn lớn (\n\n) hoặc từng dòng thoại (\n)
     paragraphs = text.split("\n")
     chunks = []
     current_chunk = []
@@ -115,7 +138,7 @@ def split_text_smartly(text, max_chars=18000):
                 
     return [c for c in final_chunks if c.strip()]
 
-# --- HÀM TRÍCH XUẤT ID YOUTUBE ---
+# --- HÀM TRÍCH XUẤT VIDEO ID ---
 def extract_video_id(url):
     url = url.strip()
     if "v=" in url:
@@ -138,7 +161,7 @@ def fetch_youtube_subtitles_cloud(video_id):
         payload = {
             "context": {
                 "client": {
-                    "hl": "vi", "gl": "VN",
+                    "hl": "en", "gl": "US",
                     "clientName": "ANDROID", "clientVersion": "19.29.35",
                     "androidSdkVersion": 30
                 }
@@ -206,12 +229,12 @@ def fetch_youtube_subtitles_cloud(video_id):
                             lines.append(clean_l)
                 
                 if lines:
-                    lang_label = f"{target_c.get('label', 'Phụ đề')} [{target_c.get('language_code', '')}] • Mạng lưới Proxy"
+                    lang_label = f"{target_c.get('label', 'Phụ đề')} [{target_c.get('language_code', '')}] • Proxy"
                     return "\n".join(lines), lang_label, None
         except Exception:
             continue
 
-    return None, None, "Không thể lấy phụ đề do YouTube tạm thời hạn chế truy cập đối với video này. Hãy dán trực tiếp kịch bản vào khung bên dưới."
+    return None, None, "Không thể lấy phụ đề do video bị giới hạn truy cập. Hãy dán trực tiếp kịch bản vào khung dưới."
 
 def get_subtitles(url):
     video_id = extract_video_id(url)
@@ -255,7 +278,7 @@ with st.sidebar:
 st.markdown("""
 <div class="main-header">
     <h1>🎬 OmniContent Studio AI</h1>
-    <p>Trích xuất phụ đề gốc YouTube, biên dịch kịch bản & Tối ưu hóa SEO đa nền tảng</p>
+    <p>Hệ thống tự động biên dịch kịch bản tốc độ cao, 20 Prompt ảnh & SEO YouTube đa ngữ</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -263,11 +286,11 @@ st.markdown("""
 mode = st.selectbox(
     "CHỌN NỀN TẢNG AI ĐIỀU HÀNH:",
     [
-        "⚡ 1 API: Groq (Miễn phí 100% - Tốc độ cực cao, Khuyên dùng)",
+        "⚡ 1 API: Groq (Miễn phí 100% - Tối ưu tự động theo Model)",
+        "🔥 KẾT HỢP 2 API: Gemini Dịch thuật + Groq Tạo Prompt & SEO (Khuyên dùng cho truyện dài)",
         "⚡ 1 API: Google Gemini (Bản miễn phí)",
         "⚡ 1 API: Anthropic Claude (Chính hãng hoặc Proxy bên thứ 3)",
-        "⚡ 1 API: OpenAI / ChatGPT / Proxy bên thứ 3",
-        "🔥 KẾT HỢP 2 API: Gemini Dịch thuật + Groq Tạo Prompt & SEO"
+        "⚡ 1 API: OpenAI / ChatGPT / Proxy bên thứ 3"
     ],
     key="cfg_mode"
 )
@@ -282,6 +305,11 @@ if "Groq" in mode:
     col_model, col_scan = st.columns([2, 1])
     with col_model:
         groq_model = st.selectbox("Chọn Model Groq:", st.session_state.groq_models, key="saved_groq_model")
+        # Hiển thị thông báo tối ưu theo mô hình
+        if "120b" in groq_model.lower():
+            st.caption("💡 **Chế độ OpenAI (120B):** Kích hoạt bộ xử lý thông minh, văn phong cao cấp, tự động bảo vệ trần 8.000 TPM.")
+        elif "llama" in groq_model.lower():
+            st.caption("⚡ **Chế độ Meta Llama:** Kích hoạt khối dịch siêu lớn (~15.000 ký tự), tốc độ cực nhanh, tăng cường chỉ dẫn văn phong.")
     with col_scan:
         st.write("")
         st.write("")
@@ -299,6 +327,15 @@ if "Groq" in mode:
                 except Exception as e:
                     st.error(f"Lỗi: {e}")
 
+elif "KẾT HỢP" in mode:
+    c1, c2 = st.columns(2)
+    with c1:
+        gemini_key = st.text_input("Gemini API Key (Dịch toàn bộ văn bản dài 1 lần duy nhất):", type="password", key="saved_combo_gemini")
+        gemini_model = "gemini-3.8-flash"
+    with c2:
+        groq_key = st.text_input("Groq API Key (Làm 20 Prompt ảnh & SEO siêu tốc):", type="password", key="saved_combo_groq")
+        groq_model = st.selectbox("Chọn Model Groq:", st.session_state.groq_models, key="saved_combo_groq_model")
+
 elif "Google Gemini" in mode:
     col_key, col_model = st.columns([2, 1])
     with col_key:
@@ -315,7 +352,7 @@ elif "Claude" in mode:
     with col_model:
         claude_model = st.selectbox("Chọn Model:", ["claude-3-5-sonnet-20240620", "claude-3-haiku-20240307", "claude-3-7-sonnet-20250219"], key="saved_claude_model")
 
-elif "OpenAI" in mode:
+else: # OpenAI
     col_key, col_url, col_model = st.columns([1.5, 1.2, 1.3])
     with col_key:
         openai_key = st.text_input("Nhập API Key:", type="password", placeholder="sk-...", key="saved_openai_key")
@@ -324,16 +361,7 @@ elif "OpenAI" in mode:
     with col_model:
         openai_model = st.selectbox("Chọn Model:", ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"], key="saved_openai_model")
 
-else: # KẾT HỢP 2 API
-    c1, c2 = st.columns(2)
-    with c1:
-        gemini_key = st.text_input("Gemini API Key (Dịch kịch bản dài):", type="password", key="saved_combo_gemini")
-        gemini_model = "gemini-3.8-flash"
-    with c2:
-        groq_key = st.text_input("Groq API Key (Tạo 20 Prompt & SEO):", type="password", key="saved_combo_groq")
-        groq_model = st.selectbox("Chọn Model Groq:", st.session_state.groq_models, key="saved_combo_groq_model")
-
-# 3. KHU VỰC DÁN LINK YOUTUBE ĐỂ BÓC TÁCH PHỤ ĐỀ
+# 3. KHU VỰC DÁN LINK YOUTUBE
 st.markdown("#### 🔗 Trích Xuất Nhanh Phụ Đề Gốc Từ YouTube")
 c_yt_link, c_yt_btn = st.columns([3.5, 1])
 with c_yt_link:
@@ -343,7 +371,7 @@ with c_yt_btn:
         if not yt_input_url.strip():
             st.warning("Vui lòng dán link video YouTube.")
         else:
-            with st.spinner("Đang kích hoạt cổng giải mã phụ đề..."):
+            with st.spinner("Đang trích xuất phụ đề..."):
                 subs_text, lang_name, err_msg = get_subtitles(yt_input_url.strip())
                 if err_msg:
                     st.error(err_msg)
@@ -356,12 +384,12 @@ with c_yt_btn:
 if st.session_state.detected_sub_lang:
     st.info(f"🌐 **Ngôn ngữ phụ đề gốc phát hiện được:** `{st.session_state.detected_sub_lang}`")
 
-# 4. KHUNG HIỂN THỊ / CHỈNH SỬA VĂN BẢN NGUỒN
+# 4. KHUNG NHẬP KỊCH BẢN NGUỒN
 input_text = st.text_area(
-    "Nội dung kịch bản nguồn (Tự động điền từ YouTube hoặc tự gõ):", 
+    "Nội dung kịch bản nguồn:", 
     key="input_source_text",
     height=200, 
-    placeholder="Nội dung phụ đề sau khi lấy từ video sẽ hiện ở đây, hoặc bạn có thể tự dán kịch bản vào..."
+    placeholder="Dán kịch bản truyện hoặc văn bản cần xử lý vào đây..."
 )
 
 # 5. TÙY CHỌN NGÔN NGỮ & ĐỊNH DẠNG
@@ -406,25 +434,27 @@ def parse_meta_response(raw_text):
             
     return data
 
-# --- HÀM GỌI DỊCH THUẬT KÈM CƠ CHẾ AUTO-RETRY KHI CHẠM TRẦN 429 ---
-def call_single_translation_with_retry(m_choice, chunk_text, lang, style, max_retries=3):
-    if "Chia từng câu" in style:
-        format_cmd = "Yêu cầu: Tách câu ngắn theo đúng nhịp ngắt nghỉ dòng gốc để làm phụ đề video."
-    else:
-        format_cmd = "Yêu cầu: Giữ nguyên bố cục đoạn văn xuôi liền mạch, diễn đạt trôi chảy tự nhiên."
+# --- HÀM GỌI DỊCH THUẬT (TỐI ƯU HÓA THEO MODEL PROFILE) ---
+def call_single_translation_with_retry(m_choice, chunk_text, lang, style, profile, max_retries=3):
+    format_cmd = "Line-by-line dialogue format." if "Chia từng câu" in style else "Natural narrative paragraph format."
+    # Bổ sung câu lệnh điều hướng văn phong riêng của từng model
+    prompt = f"Translate the following text into {lang}. {format_cmd} {profile['style_prompt']} Output ONLY the translation without introduction or notes:\n\n{chunk_text}"
 
-    prompt = f"Bạn là một biên dịch viên kịch bản cao cấp. Hãy dịch đoạn văn bản sau sang {lang}.\n{format_cmd}\nChỉ xuất trực tiếp nội dung bản dịch, không viết lời mở đầu hay kết thúc:\n\n{chunk_text}"
-    
     for attempt in range(max_retries):
         try:
-            if "Groq" in m_choice:
-                c = OpenAI(api_key=groq_key.strip(), base_url="https://api.groq.com/openai/v1")
-                r = c.chat.completions.create(model=groq_model, messages=[{"role": "user", "content": prompt}], temperature=0.3)
-                return r.choices[0].message.content.strip()
-            elif "Gemini" in m_choice or "KẾT HỢP" in m_choice:
+            if "Gemini" in m_choice or "KẾT HỢP" in m_choice:
                 genai.configure(api_key=gemini_key.strip())
                 m = genai.GenerativeModel(gemini_model)
                 return m.generate_content(prompt).text.strip()
+            elif "Groq" in m_choice:
+                c = OpenAI(api_key=groq_key.strip(), base_url="https://api.groq.com/openai/v1")
+                r = c.chat.completions.create(
+                    model=groq_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3,
+                    max_tokens=profile["max_output_tokens"]
+                )
+                return r.choices[0].message.content.strip()
             elif "Claude" in m_choice:
                 c_url = claude_url.strip().rstrip("/") if claude_url else None
                 if c_url and c_url.endswith("/v1"): c_url = c_url[:-3]
@@ -437,34 +467,42 @@ def call_single_translation_with_retry(m_choice, chunk_text, lang, style, max_re
                 return r.choices[0].message.content.strip()
         except Exception as e:
             err_str = str(e).lower()
-            # Nếu chạm trần Rate Limit (429/TPM), tự động nghỉ rồi gọi lại thay vì sập web
-            if ("429" in err_str or "rate limit" in err_str or "quota" in err_str) and attempt < max_retries - 1:
-                wait_sec = 6 * (attempt + 1)
-                st.toast(f"Đang xả tải hạn mức TPM, tự động thử lại sau {wait_sec}s... ⏳")
+            if ("429" in err_str or "rate limit" in err_str or "quota" in err_str or "413" in err_str) and attempt < max_retries - 1:
+                wait_sec = 5 * (attempt + 1)
+                st.toast(f"Đang tự động xả tải TPM, tiếp tục sau {wait_sec}s... ⏳")
                 time.sleep(wait_sec)
             else:
                 raise e
 
-# --- HÀM DỊCH TỰ ĐỘNG CHIA & GHÉP (CHỈ CHIA 6-7 LẦN KHI GẶP TRUYỆN SIÊU DÀI) ---
+# --- HÀM DỊCH THUẬT TỰ ĐỘNG THÍCH ỨNG ---
 def run_translation_with_chunking(m_choice, full_text, lang, style):
-    chunks = split_text_smartly(full_text, max_chars=18000)
+    if "Gemini" in m_choice or "KẾT HỢP" in m_choice:
+        st.toast("Dùng Gemini: Dịch toàn bộ văn bản trong 1 lần duy nhất! 🚀")
+        profile = {"style_prompt": "", "max_output_tokens": 8000}
+        res = call_single_translation_with_retry(m_choice, full_text, lang, style, profile)
+        return re.sub(r"<think>.*?</think>", "", res, flags=re.DOTALL).strip()
+
+    # Nhận diện cấu hình thích hợp của model được chọn
+    chosen_model = groq_model if "Groq" in m_choice else "openai"
+    profile = get_model_profile(chosen_model)
+
+    chunks = split_text_smartly(full_text, max_chars=profile["chunk_size"])
     total = len(chunks)
     translated_parts = []
     
     for idx, chunk in enumerate(chunks, 1):
         if total > 1:
-            st.toast(f"Đang dịch khối {idx}/{total} (Khối lớn ~18.000 ký tự)... ⏳")
-        res = call_single_translation_with_retry(m_choice, chunk, lang, style)
+            st.toast(f"Đang dịch phần {idx}/{total} (Khối {profile['chunk_size']:,} ký tự)... ⏳")
+        res = call_single_translation_with_retry(m_choice, chunk, lang, style, profile)
         clean_res = re.sub(r"<think>.*?</think>", "", res, flags=re.DOTALL).strip()
         translated_parts.append(clean_res)
         
-        # Nghỉ nhẹ 0.8s giữa các khối lớn để giữ nhịp độ an toàn
         if idx < total:
-            time.sleep(0.8)
+            time.sleep(0.6)
             
     return "\n\n".join(translated_parts)
 
-# --- HÀM TẠO PROMPT & SEO (ĐỒNG BỘ THEO NGÔN NGỮ ĐÍCH) ---
+# --- HÀM TẠO PROMPT & SEO ---
 def run_metadata_generation(m_choice, text, lang):
     prompt = f"""
     Dựa vào nội dung kịch bản dưới đây, hãy tạo ĐỦ 3 PHẦN theo đúng cấu trúc thẻ:
@@ -509,7 +547,7 @@ if start_btn:
         st.error("Chế độ kết hợp yêu cầu nhập đủ cả Gemini Key và Groq Key!")
     else:
         try:
-            with st.spinner(f"⏳ Bước 1/2: Đang biên dịch kịch bản sang {target_language} (Khối lớn ~90% công suất)..."):
+            with st.spinner(f"⏳ Bước 1/2: Đang biên dịch kịch bản sang {target_language}..."):
                 trans_clean = run_translation_with_chunking(mode, current_source, target_language, translation_style)
             
             with st.spinner(f"⏳ Bước 2/2: Đang tạo 20 Prompt ảnh và SEO/Mô tả bằng {target_language}..."):
@@ -570,7 +608,7 @@ if active_session:
                     st.toast(f"Đã cập nhật: {edit_title.strip()}! ✅")
                     st.rerun()
         with c_btn_del:
-            if st.button("🗑️ Xóa", key=f"btn_del_{s_id}", use_container_width=True):
+            if st.button("🗑️️ Xóa", key=f"btn_del_{s_id}", use_container_width=True):
                 st.session_state.history = [s for s in st.session_state.history if s["id"] != s_id]
                 st.session_state.active_id = None
                 st.session_state.input_source_text = ""
