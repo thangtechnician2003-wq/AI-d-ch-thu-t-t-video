@@ -72,12 +72,13 @@ LANGUAGES = [
     "Tiếng Nhật", "Tiếng Pháp (Canada)"
 ]
 
-# --- THUẬT TOÁN CHIA NHỎ VĂN BẢN (CHỐNG TRÀN TẢI TOKEN API) ---
-def split_text_smartly(text, max_chars=2500):
+# --- THUẬT TOÁN CHIA NHỎ VĂN BẢN (NÂNG LÊN SÁT 90% TRẦN MODEL: 18.000 KÝ TỰ) ---
+def split_text_smartly(text, max_chars=18000):
     text = text.strip()
     if len(text) <= max_chars:
         return [text]
     
+    # Ưu tiên tách theo đoạn văn lớn (\n\n) hoặc từng dòng thoại (\n)
     paragraphs = text.split("\n")
     chunks = []
     current_chunk = []
@@ -114,7 +115,7 @@ def split_text_smartly(text, max_chars=2500):
                 
     return [c for c in final_chunks if c.strip()]
 
-# --- HÀM TRÍCH XUẤT VIDEO ID CHUẨN XÁC TUYỆT ĐỐI ---
+# --- HÀM TRÍCH XUẤT ID YOUTUBE ---
 def extract_video_id(url):
     url = url.strip()
     if "v=" in url:
@@ -126,9 +127,8 @@ def extract_video_id(url):
     match = re.search(r"([0-9A-Za-z_-]{11})", url)
     return match.group(1) if match else None
 
-# --- BỘ GIẢI MÃ PHỤ ĐỀ YOUTUBE VƯỢT TƯỜNG LỬA CLOUD (3 TẦNG BẢO VỆ) ---
+# --- BỘ GIẢI MÃ PHỤ ĐỀ YOUTUBE ---
 def fetch_youtube_subtitles_cloud(video_id):
-    # TẦNG 1: Sử dụng cổng Innertube Android Client (Không bị chặn trang Bot trên Cloud)
     try:
         api_url = "https://www.youtube.com/youtubei/v1/player"
         headers = {
@@ -138,10 +138,8 @@ def fetch_youtube_subtitles_cloud(video_id):
         payload = {
             "context": {
                 "client": {
-                    "hl": "vi",
-                    "gl": "VN",
-                    "clientName": "ANDROID",
-                    "clientVersion": "19.29.35",
+                    "hl": "vi", "gl": "VN",
+                    "clientName": "ANDROID", "clientVersion": "19.29.35",
                     "androidSdkVersion": 30
                 }
             },
@@ -153,7 +151,6 @@ def fetch_youtube_subtitles_cloud(video_id):
             
         caption_tracks = player_data.get("captions", {}).get("playerCaptionsTracklistRenderer", {}).get("captionTracks", [])
         if caption_tracks:
-            # Ưu tiên lấy phụ đề gốc
             sorted_tracks = sorted(caption_tracks, key=lambda x: 1 if x.get("kind") == "asr" else 0)
             target_track = sorted_tracks[0]
             base_url = target_track.get("baseUrl")
@@ -177,7 +174,6 @@ def fetch_youtube_subtitles_cloud(video_id):
     except Exception:
         pass
 
-    # TẦNG 2: Mạng lưới Invidious Proxy (Vượt hoàn toàn dải IP bị cấm của AWS)
     instances = [
         "https://inv.nadeko.net",
         "https://invidious.nerdvpn.de",
@@ -199,7 +195,6 @@ def fetch_youtube_subtitles_cloud(video_id):
                 with urllib.request.urlopen(vtt_req, timeout=8) as vtt_resp:
                     vtt_text = vtt_resp.read().decode("utf-8", errors="ignore")
                 
-                # Bóc tách định dạng WebVTT
                 lines = []
                 for l in vtt_text.splitlines():
                     l = l.strip()
@@ -216,7 +211,7 @@ def fetch_youtube_subtitles_cloud(video_id):
         except Exception:
             continue
 
-    return None, None, "Không thể lấy phụ đề do YouTube tạm thời hạn chế truy cập đối với video này. Bạn có thể dán trực tiếp kịch bản vào khung bên dưới để tiếp tục."
+    return None, None, "Không thể lấy phụ đề do YouTube tạm thời hạn chế truy cập đối với video này. Hãy dán trực tiếp kịch bản vào khung bên dưới."
 
 def get_subtitles(url):
     video_id = extract_video_id(url)
@@ -411,8 +406,8 @@ def parse_meta_response(raw_text):
             
     return data
 
-# --- HÀM DỊCH 1 ĐOẠN ĐƠN LẺ ---
-def call_single_translation(m_choice, chunk_text, lang, style):
+# --- HÀM GỌI DỊCH THUẬT KÈM CƠ CHẾ AUTO-RETRY KHI CHẠM TRẦN 429 ---
+def call_single_translation_with_retry(m_choice, chunk_text, lang, style, max_retries=3):
     if "Chia từng câu" in style:
         format_cmd = "Yêu cầu: Tách câu ngắn theo đúng nhịp ngắt nghỉ dòng gốc để làm phụ đề video."
     else:
@@ -420,44 +415,56 @@ def call_single_translation(m_choice, chunk_text, lang, style):
 
     prompt = f"Bạn là một biên dịch viên kịch bản cao cấp. Hãy dịch đoạn văn bản sau sang {lang}.\n{format_cmd}\nChỉ xuất trực tiếp nội dung bản dịch, không viết lời mở đầu hay kết thúc:\n\n{chunk_text}"
     
-    if "Groq" in m_choice:
-        c = OpenAI(api_key=groq_key.strip(), base_url="https://api.groq.com/openai/v1")
-        r = c.chat.completions.create(model=groq_model, messages=[{"role": "user", "content": prompt}], temperature=0.3)
-        return r.choices[0].message.content.strip()
-    elif "Gemini" in m_choice or "KẾT HỢP" in m_choice:
-        genai.configure(api_key=gemini_key.strip())
-        m = genai.GenerativeModel(gemini_model)
-        return m.generate_content(prompt).text.strip()
-    elif "Claude" in m_choice:
-        c_url = claude_url.strip().rstrip("/") if claude_url else None
-        if c_url and c_url.endswith("/v1"): c_url = c_url[:-3]
-        c = anthropic.Anthropic(api_key=claude_key.strip(), base_url=c_url)
-        r = c.messages.create(model=claude_model, max_tokens=4000, messages=[{"role": "user", "content": prompt}])
-        return r.content[0].text.strip()
-    else: # OpenAI
-        c = OpenAI(api_key=openai_key.strip(), base_url=openai_url.strip() if openai_url else None)
-        r = c.chat.completions.create(model=openai_model, messages=[{"role": "user", "content": prompt}], temperature=0.3)
-        return r.choices[0].message.content.strip()
+    for attempt in range(max_retries):
+        try:
+            if "Groq" in m_choice:
+                c = OpenAI(api_key=groq_key.strip(), base_url="https://api.groq.com/openai/v1")
+                r = c.chat.completions.create(model=groq_model, messages=[{"role": "user", "content": prompt}], temperature=0.3)
+                return r.choices[0].message.content.strip()
+            elif "Gemini" in m_choice or "KẾT HỢP" in m_choice:
+                genai.configure(api_key=gemini_key.strip())
+                m = genai.GenerativeModel(gemini_model)
+                return m.generate_content(prompt).text.strip()
+            elif "Claude" in m_choice:
+                c_url = claude_url.strip().rstrip("/") if claude_url else None
+                if c_url and c_url.endswith("/v1"): c_url = c_url[:-3]
+                c = anthropic.Anthropic(api_key=claude_key.strip(), base_url=c_url)
+                r = c.messages.create(model=claude_model, max_tokens=4000, messages=[{"role": "user", "content": prompt}])
+                return r.content[0].text.strip()
+            else: # OpenAI
+                c = OpenAI(api_key=openai_key.strip(), base_url=openai_url.strip() if openai_url else None)
+                r = c.chat.completions.create(model=openai_model, messages=[{"role": "user", "content": prompt}], temperature=0.3)
+                return r.choices[0].message.content.strip()
+        except Exception as e:
+            err_str = str(e).lower()
+            # Nếu chạm trần Rate Limit (429/TPM), tự động nghỉ rồi gọi lại thay vì sập web
+            if ("429" in err_str or "rate limit" in err_str or "quota" in err_str) and attempt < max_retries - 1:
+                wait_sec = 6 * (attempt + 1)
+                st.toast(f"Đang xả tải hạn mức TPM, tự động thử lại sau {wait_sec}s... ⏳")
+                time.sleep(wait_sec)
+            else:
+                raise e
 
-# --- HÀM DỊCH TỰ ĐỘNG CHIA NHỎ & GHÉP (SMART CHUNKING) ---
+# --- HÀM DỊCH TỰ ĐỘNG CHIA & GHÉP (CHỈ CHIA 6-7 LẦN KHI GẶP TRUYỆN SIÊU DÀI) ---
 def run_translation_with_chunking(m_choice, full_text, lang, style):
-    chunks = split_text_smartly(full_text, max_chars=2500)
+    chunks = split_text_smartly(full_text, max_chars=18000)
     total = len(chunks)
     translated_parts = []
     
     for idx, chunk in enumerate(chunks, 1):
         if total > 1:
-            st.toast(f"Đang dịch phần {idx}/{total}... ⏳")
-        res = call_single_translation(m_choice, chunk, lang, style)
+            st.toast(f"Đang dịch khối {idx}/{total} (Khối lớn ~18.000 ký tự)... ⏳")
+        res = call_single_translation_with_retry(m_choice, chunk, lang, style)
         clean_res = re.sub(r"<think>.*?</think>", "", res, flags=re.DOTALL).strip()
         translated_parts.append(clean_res)
         
+        # Nghỉ nhẹ 0.8s giữa các khối lớn để giữ nhịp độ an toàn
         if idx < total:
-            time.sleep(1.2)
+            time.sleep(0.8)
             
     return "\n\n".join(translated_parts)
 
-# --- HÀM TẠO PROMPT & SEO (BẮT BUỘC ĐỒNG BỘ THEO NGÔN NGỮ ĐÍCH) ---
+# --- HÀM TẠO PROMPT & SEO (ĐỒNG BỘ THEO NGÔN NGỮ ĐÍCH) ---
 def run_metadata_generation(m_choice, text, lang):
     prompt = f"""
     Dựa vào nội dung kịch bản dưới đây, hãy tạo ĐỦ 3 PHẦN theo đúng cấu trúc thẻ:
@@ -472,7 +479,7 @@ def run_metadata_generation(m_choice, text, lang):
     (Danh sách các thẻ từ khóa SEO thịnh hành BẮT BUỘC BẰNG {lang}, cách nhau bằng dấu phẩy)
 
     KỊCH BẢN:
-    {text[:3500]}
+    {text[:4500]}
     """
     if "Groq" in m_choice or "KẾT HỢP" in m_choice:
         c = OpenAI(api_key=groq_key.strip(), base_url="https://api.groq.com/openai/v1")
@@ -502,7 +509,7 @@ if start_btn:
         st.error("Chế độ kết hợp yêu cầu nhập đủ cả Gemini Key và Groq Key!")
     else:
         try:
-            with st.spinner(f"⏳ Bước 1/2: Đang tự động phân đoạn & biên dịch sang {target_language}..."):
+            with st.spinner(f"⏳ Bước 1/2: Đang biên dịch kịch bản sang {target_language} (Khối lớn ~90% công suất)..."):
                 trans_clean = run_translation_with_chunking(mode, current_source, target_language, translation_style)
             
             with st.spinner(f"⏳ Bước 2/2: Đang tạo 20 Prompt ảnh và SEO/Mô tả bằng {target_language}..."):
