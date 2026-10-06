@@ -8,14 +8,47 @@ import google.generativeai as genai
 from openai import OpenAI
 import anthropic
 
-# Cấu hình giao diện trang web
-st.set_page_config(page_title="ATH - Multi AI Content Gen", layout="wide", page_icon="⚡")
+# 1. CẤU HÌNH GIAO DIỆN & STYLE MỚI (LOẠI BỎ HOÀN TOÀN CHỮ ATH)
+st.set_page_config(
+    page_title="Studio Kịch Bản & Video AI", 
+    layout="wide", 
+    page_icon="🎬"
+)
+
+# Tùy biến giao diện hiện đại hơn
+st.markdown("""
+<style>
+    .main-header {
+        background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+        padding: 24px;
+        border-radius: 12px;
+        color: #f8fafc;
+        margin-bottom: 25px;
+        border: 1px solid #334155;
+    }
+    .main-header h1 {
+        margin: 0;
+        font-size: 28px;
+        font-weight: 700;
+        color: #38bdf8;
+    }
+    .main-header p {
+        margin: 6px 0 0 0;
+        color: #94a3b8;
+        font-size: 14px;
+    }
+    .stButton>button {
+        border-radius: 8px;
+        font-weight: 600;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Khởi tạo bộ nhớ tạm
 if "history" not in st.session_state:
     st.session_state.history = []
-if "active_idx" not in st.session_state:
-    st.session_state.active_idx = None
+if "active_id" not in st.session_state:
+    st.session_state.active_id = None
 if "groq_models" not in st.session_state:
     st.session_state.groq_models = [
         "openai/gpt-oss-120b",
@@ -33,50 +66,54 @@ LANGUAGES = [
     "Tiếng Nhật", "Tiếng Pháp (Canada)"
 ]
 
-# --- MENU TRÁI (LỊCH SỬ VÀ QUẢN LÝ PHIÊN) ---
+# --- THANH BÊN: QUẢN LÝ LỊCH SỬ PHIÊN DỰ ÁN ---
 with st.sidebar:
-    st.title("📁 Lịch Sử Phiên")
+    st.markdown("### 🗂️ Danh Sách Dự Án")
     c_new, c_clear = st.columns([1.5, 1])
     with c_new:
-        if st.button("➕ Phiên Mới", use_container_width=True, type="primary"):
-            st.session_state.active_idx = None
+        if st.button("➕ Tạo mới", use_container_width=True, type="primary"):
+            st.session_state.active_id = None
             st.rerun()
     with c_clear:
         if st.button("🧹 Xóa hết", use_container_width=True):
             st.session_state.history = []
-            st.session_state.active_idx = None
+            st.session_state.active_id = None
             st.rerun()
     
     st.divider()
     if not st.session_state.history:
-        st.caption("Chưa có phiên làm việc nào.")
+        st.caption("Chưa có dự án nào được lưu.")
     else:
-        for idx, item in enumerate(st.session_state.history):
-            is_active = (st.session_state.active_idx == idx)
-            btn_prefix = "👉 📄" if is_active else "📄"
+        for item in st.session_state.history:
+            is_active = (st.session_state.active_id == item["id"])
+            btn_prefix = "👉 🎬" if is_active else "📄"
             btn_label = f"{btn_prefix} {item['title']}"
-            if st.button(btn_label, key=f"sidebar_item_{item['id']}", use_container_width=True):
-                st.session_state.active_idx = idx
+            if st.button(btn_label, key=f"sidebar_btn_{item['id']}", use_container_width=True):
+                st.session_state.active_id = item["id"]
                 st.rerun()
 
-# --- GIAO DIỆN CHÍNH ---
-st.title("ATH - MULTI AI CONTENT GEN")
-st.caption("HỆ THỐNG TỰ ĐỘNG TẠO NỘI DUNG ĐA NỀN TẢNG (1 API HOẶC NHIỀU API)")
+# --- KHUNG BANNER TIÊU ĐỀ MỚI ---
+st.markdown("""
+<div class="main-header">
+    <h1>🎬 OmniContent Studio AI</h1>
+    <p>Hệ thống tự động biên dịch kịch bản đa ngữ, tạo 20 Prompt ảnh nghệ thuật & Tối ưu hóa SEO YouTube</p>
+</div>
+""", unsafe_allow_html=True)
 
-# 1. Chọn chế độ cấu hình API
+# 1. Chọn phương thức kết nối API
 mode = st.selectbox(
-    "CHỌN PHƯƠNG THỨC HOẠT ĐỘNG:",
+    "CHỌN NỀN TẢNG AI ĐIỀU HÀNH:",
     [
-        "⚡ DÙNG 1 API DUY NHẤT: Groq (Miễn phí 100% - Siêu nhanh, Khuyên dùng)",
-        "⚡ DÙNG 1 API DUY NHẤT: Google Gemini (Miễn phí 20 lần/ngày)",
-        "⚡ DÙNG 1 API DUY NHẤT: Anthropic Claude (Chính hãng hoặc Proxy bên thứ 3)",
-        "⚡ DÙNG 1 API DUY NHẤT: OpenAI / ChatGPT / Proxy khác",
-        "🔥 KẾT HỢP 2 API: Gemini Dịch + Groq làm Prompt/SEO (Chia tải)"
+        "⚡ 1 API: Groq (Miễn phí 100% - Tốc độ cực cao, Khuyên dùng)",
+        "⚡ 1 API: Google Gemini (Bản miễn phí)",
+        "⚡ 1 API: Anthropic Claude (Chính hãng hoặc Proxy bên thứ 3)",
+        "⚡ 1 API: OpenAI / ChatGPT / Proxy bên thứ 3",
+        "🔥 KẾT HỢP 2 API: Gemini Dịch thuật + Groq Tạo Prompt & SEO"
     ]
 )
 
-# 2. Khung cấu hình thông tin API
-if "Groq (Miễn phí 100%" in mode:
+# 2. Cấu hình thông tin API
+if "Groq" in mode:
     col_key, col_url = st.columns([1.5, 1.2])
     with col_key:
         groq_key = st.text_input("Nhập Groq API Key (gsk_...):", type="password")
@@ -88,16 +125,16 @@ if "Groq (Miễn phí 100%" in mode:
     with col_scan:
         st.write("")
         st.write("")
-        if st.button("🔍 Quét Model khả dụng trên Groq", use_container_width=True):
+        if st.button("🔍 Quét Model Groq", use_container_width=True):
             if not groq_key:
-                st.warning("Vui lòng dán Groq API Key trước.")
+                st.warning("Vui lòng nhập API Key trước khi quét.")
             else:
                 try:
                     c = OpenAI(api_key=groq_key.strip(), base_url="https://api.groq.com/openai/v1")
                     m_list = [m.id for m in c.models.list().data if "whisper" not in m.id and "guard" not in m.id and "allam" not in m.id]
                     if m_list:
                         st.session_state.groq_models = m_list
-                        st.success("Đã cập nhật danh sách Model!")
+                        st.success("Đã cập nhật danh sách model thành công!")
                         st.rerun()
                 except Exception as e:
                     st.error(f"Lỗi: {e}")
@@ -130,29 +167,29 @@ elif "OpenAI" in mode:
 else: # KẾT HỢP 2 API
     c1, c2 = st.columns(2)
     with c1:
-        gemini_key = st.text_input("Gemini API Key (Dùng để dịch truyện dài):", type="password")
+        gemini_key = st.text_input("Gemini API Key (Dịch truyện dài):", type="password")
         gemini_model = "gemini-3.8-flash"
     with c2:
-        groq_key = st.text_input("Groq API Key (Dùng để tạo Prompt & SEO):", type="password")
+        groq_key = st.text_input("Groq API Key (Làm 20 Prompt & SEO):", type="password")
         groq_model = st.selectbox("Chọn Model Groq:", st.session_state.groq_models)
 
 # 3. Khung nhập văn bản nguồn
 input_text = st.text_area(
-    "Nội dung văn bản nguồn:", 
+    "Văn bản kịch bản hoặc câu chuyện gốc:", 
     height=180, 
-    placeholder="Dán toàn bộ văn bản hoặc kịch bản truyện dài vào đây..."
+    placeholder="Dán toàn bộ nội dung kịch bản văn xuôi hoặc truyện dài cần chuyển đổi vào đây..."
 )
 
-# 4. Tùy chọn Ngôn ngữ & Phong cách dịch
+# 4. Tùy chọn Ngôn ngữ mục tiêu & Định dạng
 col_lang, col_style, col_btn = st.columns([1.5, 2, 1])
 with col_lang:
-    target_language = st.selectbox("NGÔN NGỮ MỤC TIÊU:", LANGUAGES)
+    target_language = st.selectbox("NGÔN NGỮ ĐÍCH:", LANGUAGES)
 with col_style:
     translation_style = st.selectbox(
-        "PHONG CÁCH BẢN DỊCH:",
+        "ĐỊNH DẠNG BẢN DỊCH:",
         [
-            "✂️ Chia nhỏ từng đoạn (1-2 câu/dòng, tối ưu video & phụ đề)",
-            "📖 Văn xuôi liền mạch (Đoạn dài tự nhiên, tối ưu đọc truyện)"
+            "✂️ Chia từng câu ngắn (Tối ưu phụ đề & khớp khung hình video)",
+            "📖 Văn xuôi liền mạch (Đoạn văn tự nhiên theo tiêu chuẩn đọc truyện)"
         ]
     )
 with col_btn:
@@ -160,7 +197,7 @@ with col_btn:
     st.write("")
     start_btn = st.button("🚀 BẮT ĐẦU TẠO", use_container_width=True, type="primary")
 
-# --- HÀM BÓC TÁCH KẾT QUẢ TỪ AI ---
+# --- HÀM BÓC TÁCH DỮ LIỆU ---
 def parse_meta_response(raw_text):
     text = re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL).strip()
     data = {"image_prompts": [], "youtube_description": "", "seo_tags": ""}
@@ -184,14 +221,14 @@ def parse_meta_response(raw_text):
             
     return data
 
-# --- HÀM DỊCH THUẬT ---
+# --- HÀM THỰC HIỆN DỊCH THUẬT ---
 def run_translation(m_choice, text, lang, style):
-    if "Chia nhỏ" in style:
-        format_cmd = "Yêu cầu: Chia bản dịch thành từng đoạn rất ngắn (mỗi đoạn 1-2 câu, xuống dòng theo thoại nhân vật) để làm phụ đề video."
+    if "Chia từng câu" in style:
+        format_cmd = "Yêu cầu: Tách câu ngắn, mỗi đoạn chỉ 1-2 câu, xuống dòng theo lời thoại nhân vật để làm phụ đề cho video."
     else:
-        format_cmd = "Yêu cầu: Giữ nguyên bố cục văn xuôi mạch lạc, liên kết tự nhiên theo tiêu chuẩn xuất bản sách truyện."
+        format_cmd = "Yêu cầu: Giữ nguyên bố cục đoạn văn xuôi liền mạch, hành văn uyển chuyển và chuẩn xác."
 
-    prompt = f"Bạn là dịch giả chuyên nghiệp. Hãy dịch toàn bộ văn bản sau sang {lang}.\n{format_cmd}\nChỉ xuất bản dịch, không giải thích:\n\n{text}"
+    prompt = f"Bạn là một biên dịch viên kịch bản cao cấp. Hãy dịch văn bản sau sang {lang}.\n{format_cmd}\nChỉ xuất trực tiếp nội dung bản dịch, không viết lời mở đầu hay kết thúc:\n\n{text}"
     
     if "Groq" in m_choice:
         c = OpenAI(api_key=groq_key.strip(), base_url="https://api.groq.com/openai/v1")
@@ -212,21 +249,21 @@ def run_translation(m_choice, text, lang, style):
         r = c.chat.completions.create(model=openai_model, messages=[{"role": "user", "content": prompt}], temperature=0.3)
         return r.choices[0].message.content.strip()
 
-# --- HÀM TẠO PROMPT VÀ SEO ---
-def run_metadata_generation(m_choice, text):
+# --- HÀM TẠO PROMPT & SEO (BẮT BUỘC ĐỒNG BỘ THEO NGÔN NGỮ ĐANG CHỌN) ---
+def run_metadata_generation(m_choice, text, lang):
     prompt = f"""
-    Dựa vào diễn biến câu chuyện sau, hãy tạo ĐỦ 3 PHẦN theo đúng định dạng thẻ:
+    Dựa vào nội dung kịch bản dưới đây, hãy tạo ĐỦ 3 PHẦN theo đúng cấu trúc thẻ:
 
     ===PROMPT_ANH===
-    (Viết đúng 20 prompt chi tiết bằng tiếng Anh theo mạch truyện cho AI vẽ ảnh, mỗi prompt 1 dòng, đánh số từ 1 đến 20)
+    (Viết đúng 20 câu Prompt mô tả cảnh chi tiết bằng TIẾNG ANH theo tiến trình câu chuyện để đưa vào AI vẽ ảnh, mỗi prompt 1 dòng, đánh số từ 1 đến 20)
 
     ===MO_TA_YOUTUBE===
-    (Tiêu đề video giật tít, tóm tắt hấp dẫn, kêu gọi Đăng ký và danh sách hashtag)
+    (Viết tiêu đề video giật tít, tóm tắt diễn biến kịch tính, lời kêu gọi Đăng ký kênh và danh sách hashtag. BẮT BUỘC VIẾT 100% BẰNG {lang})
 
     ===SEO_TAGS===
-    (Danh sách các thẻ từ khóa SEO cách nhau bởi dấu phẩy)
+    (Danh sách các thẻ từ khóa SEO thịnh hành BẮT BUỘC BẰNG {lang}, cách nhau bằng dấu phẩy)
 
-    CÂU CHUYỆN:
+    KỊCH BẢN:
     {text[:3500]}
     """
     if "Groq" in m_choice or "KẾT HỢP" in m_choice:
@@ -248,20 +285,20 @@ def run_metadata_generation(m_choice, text):
         r = c.chat.completions.create(model=openai_model, messages=[{"role": "user", "content": prompt}], temperature=0.3)
         return parse_meta_response(r.choices[0].message.content)
 
-# --- XỬ LÝ SỰ KIỆN TẠO NỘI DUNG ---
+# --- XỬ LÝ NÚT BẮT ĐẦU TẠO ---
 if start_btn:
     if not input_text.strip():
-        st.warning("Vui lòng dán nội dung văn bản nguồn.")
+        st.warning("Vui lòng dán kịch bản hoặc văn bản nguồn.")
     elif "KẾT HỢP" in mode and (not gemini_key or not groq_key):
-        st.error("Chế độ kết hợp yêu cầu nhập cả Gemini Key và Groq Key!")
+        st.error("Chế độ kết hợp yêu cầu nhập đủ cả Gemini Key và Groq Key!")
     else:
         try:
-            with st.spinner("⏳ Bước 1/2: Đang dịch thuật câu chuyện..."):
+            with st.spinner(f"⏳ Đang biên dịch kịch bản sang {target_language}..."):
                 trans_result = run_translation(mode, input_text, target_language, translation_style)
                 trans_clean = re.sub(r"<think>.*?</think>", "", trans_result, flags=re.DOTALL).strip()
             
-            with st.spinner("⏳ Bước 2/2: Đang tạo 20 Prompt ảnh, Mô tả và Thẻ SEO..."):
-                meta_result = run_metadata_generation(mode, input_text)
+            with st.spinner(f"⏳ Đang tạo 20 Prompt ảnh và SEO/Mô tả bằng {target_language}..."):
+                meta_result = run_metadata_generation(mode, input_text, target_language)
 
             final_data = {
                 "translation": trans_clean,
@@ -271,74 +308,78 @@ if start_btn:
             }
 
             now_str = datetime.now().strftime("%H:%M - %d/%m")
-            unique_id = f"{int(time.time()*1000)}"
+            unique_id = f"session_{int(time.time() * 1000)}"
             new_session = {
                 "id": unique_id,
-                "title": f"Phiên {now_str}",
+                "title": f"Dự án {now_str}",
                 "lang": target_language,
                 "data": final_data
             }
-            # Thêm phiên mới vào đầu danh sách
+            # Thêm phiên mới vào đầu và gán active_id chính xác
             st.session_state.history.insert(0, new_session)
-            st.session_state.active_idx = 0
+            st.session_state.active_id = unique_id
             st.toast("Tạo nội dung thành công! 🎉")
             st.rerun()
         except Exception as e:
             st.error(f"Lỗi: {e}")
 
-# --- HIỂN THỊ KẾT QUẢ VÀ QUẢN LÝ PHIÊN ---
-if st.session_state.active_idx is not None and st.session_state.history:
-    curr_idx = st.session_state.active_idx
-    active_session = st.session_state.history[curr_idx]
+# --- KHUNG HIỂN THỊ DỮ LIỆU CỦA PHIÊN ĐƯỢC CHỌN (ĐỘC LẬP THEO ID) ---
+if st.session_state.history:
+    active_session = next((item for item in st.session_state.history if item["id"] == st.session_state.active_id), None)
+    
+    if not active_session:
+        active_session = st.session_state.history[0]
+        st.session_state.active_id = active_session["id"]
+
     data = active_session["data"]
     s_id = active_session["id"]
     
     st.divider()
     
-    # KHUNG ĐỔI TÊN VÀ XÓA PHIÊN (ĐÃ SỬA DỨT ĐIỂM BẰNG FORM ĐỘC LẬP)
+    # KHUNG ĐỔI TÊN & XÓA PHIÊN (KHÓA THEO ID ĐỂ CHỐNG XUNG ĐỘT)
     with st.container():
-        st.write(f"### 📌 Đang xem: **{active_session['title']}**")
+        st.markdown(f"#### 📌 Đang xem: **{active_session['title']}** — *[{active_session.get('lang', 'Ngôn ngữ')}]*")
         c_title_input, c_btn_save, c_btn_del = st.columns([3, 1, 1])
         with c_title_input:
             edit_title = st.text_input(
-                "Đổi tên phiên:", 
+                "Tên phiên:", 
                 value=active_session["title"], 
-                key=f"input_box_{s_id}", 
+                key=f"rename_input_{s_id}", 
                 label_visibility="collapsed",
-                placeholder="Gõ tên mới cho phiên làm việc..."
+                placeholder="Đặt lại tên cho phiên..."
             )
         with c_btn_save:
             if st.button("💾 Lưu tên", key=f"btn_save_{s_id}", use_container_width=True):
                 if edit_title.strip():
                     active_session["title"] = edit_title.strip()
-                    st.toast(f"Đã đổi tên thành: {edit_title.strip()}! ✅")
+                    st.toast(f"Đã cập nhật: {edit_title.strip()}! ✅")
                     st.rerun()
         with c_btn_del:
-            if st.button("🗑️ Xóa phiên", key=f"btn_del_{s_id}", use_container_width=True):
-                st.session_state.history.pop(curr_idx)
-                st.session_state.active_idx = 0 if st.session_state.history else None
+            if st.button("🗑️ Xóa", key=f"btn_del_{s_id}", use_container_width=True):
+                st.session_state.history = [s for s in st.session_state.history if s["id"] != s_id]
+                st.session_state.active_id = st.session_state.history[0]["id"] if st.session_state.history else None
                 st.rerun()
 
-    # 1. Bản dịch
-    with st.expander(f"01. Bản Dịch ({active_session.get('lang', 'Mục tiêu')})", expanded=True):
-        st.text_area("Bản dịch:", value=data.get("translation", ""), height=260)
+    # 1. BẢN DỊCH (Có gắn key={s_id} để chống lỗi đệm giữa các phiên cũ/mới)
+    with st.expander(f"01. Kịch Bản Đã Dịch ({active_session.get('lang', 'Mục tiêu')})", expanded=True):
+        st.text_area("Bản dịch:", value=data.get("translation", ""), height=260, key=f"trans_area_{s_id}")
     
-    # 2. 20 Prompt ảnh
-    with st.expander("02. 20 Prompt Hình Ảnh (English)", expanded=True):
+    # 2. 20 PROMPT HÌNH ẢNH
+    with st.expander("02. 20 Prompt Hình Ảnh Theo Cảnh (English)", expanded=True):
         prompts = data.get("image_prompts", [])
         if prompts:
             for i, p in enumerate(prompts, 1):
-                st.markdown(f"**Prompt {i}:**")
+                st.markdown(f"**Cảnh {i:02d}:**")
                 st.code(p, language="text")
         else:
             st.warning("Chưa trích xuất được danh sách prompt ảnh.")
             
-    # 3. Mô tả YouTube
-    with st.expander("03. Mô Tả YouTube", expanded=True):
-        st.text_area("Mô tả:", value=data.get("youtube_description", ""), height=160)
+    # 3. MÔ TẢ YOUTUBE (Đồng bộ ngôn ngữ)
+    with st.expander(f"03. Tiêu Đề & Mô Tả YouTube ({active_session.get('lang', 'Mục tiêu')})", expanded=True):
+        st.text_area("Mô tả:", value=data.get("youtube_description", ""), height=160, key=f"desc_area_{s_id}")
         
-    # 4. SEO Tags
-    with st.expander("04. SEO Tags Viral", expanded=True):
+    # 4. TỪ KHÓA SEO (Đồng bộ ngôn ngữ)
+    with st.expander(f"04. Thẻ Từ Khóa SEO Viral ({active_session.get('lang', 'Mục tiêu')})", expanded=True):
         if data.get("seo_tags"):
             st.info(data.get("seo_tags", ""))
         else:
